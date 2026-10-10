@@ -5,10 +5,10 @@ import time
 from ultralytics import YOLO
 
 
+# SETTINGS
 
-VIDEO_PATH = "dataset/testing_videos/01.avi"
-OUTPUT_PATH = "results/01_yolo11n.mp4"
-
+VIDEO_PATH = "dataset/testing_videos/day_2.avi"
+OUTPUT_PATH = "results/01_yolo11n_day2_person_alarm.mp4"
 MODEL_PATH = "yolo11n.pt"
 
 CONFIDENCE = 0.4
@@ -24,61 +24,34 @@ USE_CLAHE = False
 
 # CREATE RESULTS FOLDER
 
-os.makedirs(
-    "results",
-    exist_ok=True
-)
+os.makedirs("results", exist_ok=True)
 
 
 # LOAD MODEL
 
-model = YOLO(
-    MODEL_PATH
-)
+model = YOLO(MODEL_PATH)
 
 
 # OPEN VIDEO
 
-
-cap = cv2.VideoCapture(
-    VIDEO_PATH
-)
+cap = cv2.VideoCapture(VIDEO_PATH)
 
 if not cap.isOpened():
-
-    print("Не удалось открыть видео")
-
-    exit()
+    print("Не удалось открыть видео:", VIDEO_PATH)
+    raise SystemExit(1)
 
 
-fps_video = cap.get(
-    cv2.CAP_PROP_FPS
-)
-
-width = int(
-    cap.get(
-        cv2.CAP_PROP_FRAME_WIDTH
-    )
-)
-
-height = int(
-    cap.get(
-        cv2.CAP_PROP_FRAME_HEIGHT
-    )
-)
+fps_video = cap.get(cv2.CAP_PROP_FPS)
+width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 if fps_video <= 0:
-
     fps_video = 25
-
 
 
 # OUTPUT VIDEO
 
-
-fourcc = cv2.VideoWriter_fourcc(
-    *"mp4v"
-)
+fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 
 out = cv2.VideoWriter(
     OUTPUT_PATH,
@@ -88,27 +61,25 @@ out = cv2.VideoWriter(
 )
 
 
+# CLAHE
 
+clahe = cv2.createCLAHE(
+    clipLimit=2.0,
+    tileGridSize=(8, 8)
+)
 
 
 # VARIABLES
 
-
 previous_gray = None
-
 movement_counter = {}
 
 frame_number = 0
-
 alarm_frames = 0
-
 total_people_detections = 0
-
 processing_start = time.time()
 
-# Data for visualization
 motion_results = []
-
 
 
 # START
@@ -116,37 +87,13 @@ motion_results = []
 print("======================================")
 print("Система видеонаблюдения запущена")
 print("======================================")
-
-print(
-    "Видео:",
-    VIDEO_PATH
-)
-
-print(
-    "Модель:",
-    MODEL_PATH
-)
-
-
-print(
-    "Motion ratio threshold:",
-    MOTION_RATIO
-)
-
-print(
-    "Минимальное количество кадров:",
-    MIN_MOVEMENT_FRAMES
-)
-
+print("Видео:", VIDEO_PATH)
+print("Модель:", MODEL_PATH)
+print("CLAHE:", USE_CLAHE)
+print("Confidence:", CONFIDENCE)
+print("Режим ALARM: обнаружение человека")
+print("Для остановки нажмите Q")
 print()
-
-print(
-    "Для остановки нажмите Q"
-)
-
-print()
-
-
 
 
 while True:
@@ -158,13 +105,28 @@ while True:
 
     frame_number += 1
 
-
     # IMAGE PREPROCESSING
-
 
     processed_frame = frame.copy()
 
+    if USE_CLAHE:
+        lab = cv2.cvtColor(
+            processed_frame,
+            cv2.COLOR_BGR2LAB
+        )
 
+        l_channel, a_channel, b_channel = cv2.split(lab)
+
+        l_channel = clahe.apply(l_channel)
+
+        lab = cv2.merge(
+            (l_channel, a_channel, b_channel)
+        )
+
+        processed_frame = cv2.cvtColor(
+            lab,
+            cv2.COLOR_LAB2BGR
+        )
 
     # GRAYSCALE + GAUSSIAN BLUR
 
@@ -179,13 +141,9 @@ while True:
         0
     )
 
-
-
     # MOTION DETECTION
 
-
     motion_mask = None
-
 
     if previous_gray is not None:
 
@@ -201,40 +159,28 @@ while True:
             cv2.THRESH_BINARY
         )
 
-
-
-        # MORPHOLOGICAL PROCESSING
-
-
         kernel = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE,
             (5, 5)
         )
 
-        # Opening
         motion_mask = cv2.morphologyEx(
             motion_mask,
             cv2.MORPH_OPEN,
             kernel
         )
 
-        # Closing
         motion_mask = cv2.morphologyEx(
             motion_mask,
             cv2.MORPH_CLOSE,
             kernel
         )
 
-
     previous_gray = blurred.copy()
-
-
 
     # FIND MOTION CONTOURS
 
-
     motion_contours = []
-
 
     if motion_mask is not None:
 
@@ -244,22 +190,14 @@ while True:
             cv2.CHAIN_APPROX_SIMPLE
         )
 
-
         for contour in contours:
 
-            area = cv2.contourArea(
-                contour
-            )
+            area = cv2.contourArea(contour)
 
             if area >= MIN_MOTION_AREA:
+                motion_contours.append(contour)
 
-                motion_contours.append(
-                    contour
-                )
-
-
-    # YOLO TRACKING
-
+    # YOLO PERSON DETECTION
 
     results = model.track(
         processed_frame,
@@ -269,52 +207,31 @@ while True:
         verbose=False
     )
 
-
-
-    # VARIABLES FOR CURRENT FRAME
-
-
-    alarm = False
-
-    max_motion_ratio = 0.0
+    boxes = results[0].boxes
 
     current_people_count = 0
+    max_motion_ratio = 0.0
 
+    # ALARM ONLY IF A PERSON IS DETECTED
 
-    # PROCESS DETECTED PEOPLE
+    if boxes is not None and len(boxes) > 0:
 
-    if results[0].boxes.id is not None:
+        current_people_count = len(boxes)
 
-        boxes = results[0].boxes
+        total_people_detections += current_people_count
 
-        ids = (
-            boxes.id
-            .cpu()
-            .numpy()
-            .astype(int)
-        )
+        # ALARM does not depend on background motion
+        alarm = True
 
-        coordinates = (
-            boxes.xyxy
-            .cpu()
-            .numpy()
-        )
+        coordinates = boxes.xyxy.cpu().numpy()
+        confidences = boxes.conf.cpu().numpy()
 
-        confidences = (
-            boxes.conf
-            .cpu()
-            .numpy()
-        )
-
-
-        current_people_count = len(
-            ids
-        )
-
-        total_people_detections += (
-            current_people_count
-        )
-
+        if boxes.id is not None:
+            ids = (
+                boxes.id.cpu().numpy().astype(int)
+            )
+        else:
+            ids = [-1] * current_people_count
 
         # PROCESS EACH PERSON
 
@@ -324,196 +241,85 @@ while True:
             confidences
         ):
 
-            x1, y1, x2, y2 = map(
-                int,
-                box
-            )
+            x1, y1, x2, y2 = map(int, box)
 
-
-            # Keep coordinates inside frame
-
-            x1 = max(
-                0,
-                x1
-            )
-
-            y1 = max(
-                0,
-                y1
-            )
-
-            x2 = min(
-                width,
-                x2
-            )
-
-            y2 = min(
-                height,
-                y2
-            )
-
-
-            # PERSON AREA
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+            x2 = min(width, x2)
+            y2 = min(height, y2)
 
             person_area = max(
                 (x2 - x1) * (y2 - y1),
                 1
             )
 
-
-            # MOTION AREA INSIDE PERSON
+            # MEASURE MOTION INSIDE PERSON BOX
 
             moving_area = 0
 
-
             for contour in motion_contours:
 
-                contour_area = cv2.contourArea(
-                    contour
-                )
+                contour_area = cv2.contourArea(contour)
 
+                cx, cy, cw, ch = cv2.boundingRect(contour)
 
-                cx, cy, cw, ch = cv2.boundingRect(
-                    contour
-                )
-
-
-                contour_x1 = cx
-                contour_y1 = cy
-
-                contour_x2 = cx + cw
-                contour_y2 = cy + ch
-
-
-                # INTERSECTION
-
-                overlap_x1 = max(
-                    x1,
-                    contour_x1
-                )
-
-                overlap_y1 = max(
-                    y1,
-                    contour_y1
-                )
-
-                overlap_x2 = min(
-                    x2,
-                    contour_x2
-                )
-
-                overlap_y2 = min(
-                    y2,
-                    contour_y2
-                )
-
+                overlap_x1 = max(x1, cx)
+                overlap_y1 = max(y1, cy)
+                overlap_x2 = min(x2, cx + cw)
+                overlap_y2 = min(y2, cy + ch)
 
                 if (
                     overlap_x2 > overlap_x1
-                    and
-                    overlap_y2 > overlap_y1
+                    and overlap_y2 > overlap_y1
                 ):
 
-                    overlap_width = (
-                        overlap_x2
-                        -
-                        overlap_x1
-                    )
-
-                    overlap_height = (
-                        overlap_y2
-                        -
-                        overlap_y1
-                    )
-
                     overlap_area = (
-                        overlap_width
-                        *
-                        overlap_height
+                        (overlap_x2 - overlap_x1)
+                        * (overlap_y2 - overlap_y1)
                     )
-
 
                     moving_area += min(
                         contour_area,
                         overlap_area
                     )
 
-
-            # MOTION RATIO
-
-            motion_ratio = (
-                moving_area
-                /
-                person_area
-            )
-
-
-            # Save maximum ratio for this frame
+            motion_ratio = moving_area / person_area
 
             max_motion_ratio = max(
                 max_motion_ratio,
                 motion_ratio
             )
 
+            # MOVEMENT COUNTER FOR TRACKED PERSON
 
-            # MOVEMENT COUNTER
+            if person_id != -1:
 
-            if motion_ratio >= MOTION_RATIO:
-
-                movement_counter[person_id] = (
-                    movement_counter.get(
-                        person_id,
-                        0
+                if motion_ratio >= MOTION_RATIO:
+                    movement_counter[person_id] = (
+                        movement_counter.get(person_id, 0) + 1
                     )
-                    + 1
+                else:
+                    movement_counter[person_id] = 0
+
+                is_moving = (
+                    movement_counter.get(person_id, 0)
+                    >= MIN_MOVEMENT_FRAMES
                 )
 
             else:
-
-                movement_counter[person_id] = 0
-
-
-
-            # MOVING PERSON
-
-            is_moving = (
-                movement_counter.get(
-                    person_id,
-                    0
-                )
-                >= MIN_MOVEMENT_FRAMES
-            )
-
-
+                is_moving = motion_ratio >= MOTION_RATIO
 
             # DRAW PERSON
 
-            if is_moving:
+            box_color = (0, 0, 255)
 
-                box_color = (
-                    0,
-                    0,
-                    255
-                )
-
+            if person_id != -1:
                 label = (
-                    f"PERSON {person_id} MOVING"
+                    f"PERSON {person_id} "
+                    f"Conf: {confidence:.2f}"
                 )
-
-                alarm = True
-
             else:
-
-                box_color = (
-                    0,
-                    255,
-                    0
-                )
-
-                label = (
-                    f"PERSON {person_id}"
-                )
-
+                label = f"PERSON Conf: {confidence:.2f}"
 
             cv2.rectangle(
                 frame,
@@ -523,72 +329,47 @@ while True:
                 3
             )
 
-
             cv2.putText(
                 frame,
                 label,
-                (
-                    x1,
-                    max(
-                        y1 - 10,
-                        25
-                    )
-                ),
+                (x1, max(y1 - 10, 25)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
+                0.6,
                 box_color,
                 2
             )
 
+    else:
+        # No person detected: no alarm
+        alarm = False
 
-    # SAVE METRICS FOR CURRENT FRAME
+    # SAVE METRICS
 
-    current_time = (
-        frame_number
-        /
-        fps_video
-    )
+    current_time = frame_number / fps_video
 
+    motion_results.append({
+        "frame": frame_number,
+        "time": current_time,
+        "motion_ratio": max_motion_ratio,
+        "alarm": int(alarm),
+        "num_people": current_people_count
+    })
 
-    motion_results.append(
-        {
-            "frame": frame_number,
-            "time": current_time,
-            "motion_ratio": max_motion_ratio,
-            "alarm": int(alarm),
-            "num_people": current_people_count
-        }
-    )
-
-
-    # ALARM
+    # DISPLAY ALARM
 
     if alarm:
 
         alarm_frames += 1
 
-
         cv2.putText(
             frame,
-            "ALARM",
+            "ALARM: PERSON DETECTED",
             (20, 50),
             cv2.FONT_HERSHEY_SIMPLEX,
-            1.4,
+            1.0,
             (0, 0, 255),
-            4
+            3
         )
-
-
-        cv2.putText(
-            frame,
-            "MOTION DETECTED",
-            (20, 90),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 0, 255),
-            2
-        )
-
 
         cv2.rectangle(
             frame,
@@ -602,90 +383,62 @@ while True:
 
         cv2.putText(
             frame,
-            "SYSTEM NORMAL",
+            "SYSTEM NORMAL - NO PERSON",
             (20, 50),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
+            0.8,
             (0, 255, 0),
             2
         )
-
 
     # FRAME NUMBER
 
     cv2.putText(
         frame,
         f"Frame: {frame_number}",
-        (
-            20,
-            height - 20
-        ),
+        (20, height - 20),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.6,
         (255, 255, 255),
         2
     )
 
-
-
     # WRITE VIDEO
 
-    out.write(
-        frame
-    )
-
-
+    out.write(frame)
 
     # DISPLAY
-
 
     cv2.imshow(
         "Video Surveillance",
         frame
     )
 
-
     key = cv2.waitKey(1) & 0xFF
 
-
     if key == ord("q"):
-
         break
 
 
 # RELEASE
 
 cap.release()
-
 out.release()
-
 cv2.destroyAllWindows()
 
 
 # METRICS
 
-processing_time = (
-    time.time()
-    -
-    processing_start
-)
-
+processing_time = time.time() - processing_start
 
 processing_fps = (
-    frame_number
-    /
-    processing_time
+    frame_number / processing_time
     if processing_time > 0
     else 0
 )
 
-
 alarm_percentage = (
-    alarm_frames
-    /
-    frame_number
-    *
-    100
+    alarm_frames / frame_number * 100
     if frame_number > 0
     else 0
 )
@@ -693,10 +446,7 @@ alarm_percentage = (
 
 # SAVE CSV
 
-motion_results_path = (
-    "results/motion_results.csv"
-)
-
+motion_results_path = "results/motion_results.csv"
 
 with open(
     motion_results_path,
@@ -717,68 +467,22 @@ with open(
     )
 
     writer.writeheader()
-
-    writer.writerows(
-        motion_results
-    )
+    writer.writerows(motion_results)
 
 
+# PRINT RESULTS
 
 print()
-
-print(
-    "======================================"
-)
-
-print(
-    "ОБРАБОТКА ЗАВЕРШЕНА"
-)
-
-print(
-    "======================================"
-)
-
-print(
-    f"Всего кадров: {frame_number}"
-)
-
-print(
-    f"Время обработки: "
-    f"{processing_time:.2f} сек."
-)
-
-print(
-    f"FPS обработки: "
-    f"{processing_fps:.2f}"
-)
-
-print(
-    f"Всего обнаружений людей: "
-    f"{total_people_detections}"
-)
-
-print(
-    f"Кадров с ALARM: "
-    f"{alarm_frames}"
-)
-
-print(
-    f"Доля кадров с ALARM: "
-    f"{alarm_percentage:.2f}%"
-)
-
+print("======================================")
+print("ОБРАБОТКА ЗАВЕРШЕНА")
+print("======================================")
+print(f"Всего кадров: {frame_number}")
+print(f"Время обработки: {processing_time:.2f} сек.")
+print(f"FPS обработки: {processing_fps:.2f}")
+print(f"Всего обнаружений людей: {total_people_detections}")
+print(f"Кадров с ALARM: {alarm_frames}")
+print(f"Доля кадров с ALARM: {alarm_percentage:.2f}%")
 print()
-
-print(
-    f"Видео сохранено: "
-    f"{OUTPUT_PATH}"
-)
-
-print(
-    f"Метрики сохранены: "
-    f"{motion_results_path}"
-)
-
-print(
-    "======================================"
-)
+print(f"Видео сохранено: {OUTPUT_PATH}")
+print(f"Метрики сохранены: {motion_results_path}")
+print("======================================")
