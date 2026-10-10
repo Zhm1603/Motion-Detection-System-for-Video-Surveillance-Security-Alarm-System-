@@ -7,9 +7,9 @@ from ultralytics import YOLO
 
 
 VIDEO_PATH = "dataset/testing_videos/01.avi"
-OUTPUT_PATH = "results_11s/01_yolo11s_clahe.mp4"
+OUTPUT_PATH = "results/01_yolo11n.mp4"
 
-MODEL_PATH = "yolo11s.pt"
+MODEL_PATH = "yolo11n.pt"
 
 CONFIDENCE = 0.4
 
@@ -19,7 +19,7 @@ MIN_MOTION_AREA = 150
 MOTION_RATIO = 0.02
 MIN_MOVEMENT_FRAMES = 3
 
-USE_CLAHE = True
+USE_CLAHE = False
 
 
 # CREATE RESULTS FOLDER
@@ -88,12 +88,6 @@ out = cv2.VideoWriter(
 )
 
 
-# CLAHE
-
-clahe = cv2.createCLAHE(
-    clipLimit=2.0,
-    tileGridSize=(8, 8)
-)
 
 
 
@@ -133,10 +127,6 @@ print(
     MODEL_PATH
 )
 
-print(
-    "CLAHE:",
-    USE_CLAHE
-)
 
 print(
     "Motion ratio threshold:",
@@ -173,25 +163,6 @@ while True:
 
 
     processed_frame = frame.copy()
-
-
-    # CLAHE
-
-    if USE_CLAHE:
-
-        gray_for_clahe = cv2.cvtColor(
-            processed_frame,
-            cv2.COLOR_BGR2GRAY
-        )
-
-        enhanced_gray = clahe.apply(
-            gray_for_clahe
-        )
-
-        processed_frame = cv2.cvtColor(
-            enhanced_gray,
-            cv2.COLOR_GRAY2BGR
-        )
 
 
 
