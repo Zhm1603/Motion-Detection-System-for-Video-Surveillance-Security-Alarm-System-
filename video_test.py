@@ -7,8 +7,8 @@ from ultralytics import YOLO
 
 # SETTINGS
 
-VIDEO_PATH = "dataset/testing_videos/day_2.avi"
-OUTPUT_PATH = "results/01_yolo11n_day2_person_alarm.mp4"
+VIDEO_PATH = "dataset/testing_videos/night.avi"
+OUTPUT_PATH = "results/01_yolo11n_night_person_alarm.mp4"
 MODEL_PATH = "yolo11n.pt"
 
 CONFIDENCE = 0.4

@@ -1,0 +1,4 @@
+
+# Large video files
+dataset/testing_videos/*.avi
+results/*.mp4
